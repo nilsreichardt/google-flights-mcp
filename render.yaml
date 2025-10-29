@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: google-flights-cheapest-offers
+    runtime: docker
+    plan: free
+    autoDeploy: false
