@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /workspace/mcp-server ./cmd/mcp-server
+RUN go build -o /workspace/mcp-server ./cmd/mcp-server
 
 FROM gcr.io/distroless/base-debian12:nonroot
 
