@@ -1,5 +1,7 @@
 # Google Flights API
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/nilsreichardt/google-flights-mcp)
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/krisukox/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/krisukox/google-flights-api/flights)
 
 This project is a Go client library for the Google Flights API. The client produces direct requests to the Google Flights API, which is much faster than using WebDriver. 
