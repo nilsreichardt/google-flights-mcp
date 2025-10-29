@@ -185,7 +185,7 @@ func main() {
 	mcp.AddTool(
 		mcpServer,
 		&mcp.Tool{
-			Name:        "Find Cheapest Offers",
+			Name:        "find_cheapest_offers",
 			Title:       "Find cheapest Google Flights offers",
 			Description: "Finds itineraries whose price is below Google's low price for the selected window.",
 		},
