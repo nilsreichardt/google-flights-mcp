@@ -1,159 +1,107 @@
-# Google Flights API
+# Google Flights MCP Server
+
+This project hosts an implementation of the [Model Context Protocol (MCP)](https://spec.modelcontextprotocol.io/)
+server that can surface cheap round-trip offers from Google Flights. The server exposes a single tool,
+`find_cheapest_offers`, which searches a date window and returns the lowest-priced itineraries along with a
+shareable booking link.
+
+While the repository still contains the `flights` Go package used to talk to Google Flights, the primary entry point
+is now the MCP server in `cmd/mcp-server`. The older package APIs remain for compatibility but are no longer the
+focus of this project.
+
+## Highlights
+
+- MCP-compliant server ready to plug into tooling that supports the protocol.
+- Searches the Google Flights price graph concurrently for a set of trip lengths.
+- Filters by Google's advertised low price (historically cheap) or an explicit `maxPrice` hard ceiling.
+- Returns shareable Google Flights URLs so the itinerary can be inspected or booked quickly.
+
+## Requirements
+
+- Go 1.23 or newer.
+- Access to the Google Flights web experience. Some regions require passing a CAPTCHA to obtain the
+  `GOOGLE_ABUSE_EXEMPTION` cookie; the bundled `flights` session helper reads it from your browser profile via
+  [`kooky`](https://github.com/browserutils/kooky).
+- Connectivity to `www.google.com`.
+
+## Running the MCP server
+
+```bash
+go run ./cmd/mcp-server
+```
+
+Command-line flags:
+
+- `--host` (default `0.0.0.0` or `HOST` env var) – interface to bind.
+- `--port` (default `8080` or `PORT` env var) – port to listen on.
+
+The server speaks the MCP Server-Sent Events transport. Point your MCP client at `http://<host>:<port>` and it will
+discover the `find_cheapest_offers` tool automatically.
+
+## Deploying
+
+### Render.com
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/nilsreichardt/google-flights-mcp)
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/krisukox/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/krisukox/google-flights-api/flights)
+### Google Cloud Run
 
-This project is a Go client library for the Google Flights API. The client produces direct requests to the Google Flights API, which is much faster than using WebDriver. 
+Set your project ID in `deploy.sh` and run:
 
-The Google Flights API doesn't have official documentation, so the project relies on analyzing how the [Google Flights website](https://www.google.com/travel/flights/) communicates with the backend.
-
-The project uses [go-retryablehttp](https://github.com/hashicorp/go-retryablehttp) under the hood. Every request to the Google Flights API is retried five times in case of an error.
-
-### Go protoc plugin used in the project
-```
-go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
+```bash
+./deploy.sh
 ```
 
-## Installation
+## Tool contract: `find_cheapest_offers`
 
-```
-go get -u github.com/krisukox/google-flights-api/flights
-```
+Input parameters (all currency values are interpreted in the selected currency):
 
-## Usage
+- `rangeStartDate` *(required)* – earliest departure date to consider (`YYYY-MM-DD`).
+- `rangeEndDate` *(required)* – latest departure date to consider (`YYYY-MM-DD`).
+- `tripLengths` *(required)* – array of positive integers describing trip durations in days.
+- `srcCities` *(required)* – list of origin cities as accepted by Google Flights.
+- `dstCities` *(required)* – list of destination cities as accepted by Google Flights.
+- `language` *(optional)* – BCP 47 language tag, default `en`.
+- `currency` *(optional)* – ISO 4217 currency code, default `USD`.
+- `adults`, `children`, `infantInSeat`, `infantOnLap` *(optional)* – traveler counts, adults default to `1`.
+- `stops` *(optional)* – maximum stops (`nonstop`, `stop1`, `stop2`, `any`), default `any`.
+- `class` *(optional)* – cabin class (`economy`, `premium_economy`, `business`, `first`), default `economy`.
+- `tripType` *(optional)* – `round_trip` or `one_way`, default `round_trip`.
+- `maxPrice` *(optional)* – hard price ceiling. When omitted, the server only returns flights that undercut Google's
+  advertised “low price” for the itinerary.
 
-### Session
-Session is the main object that contains all the API-related functions.
+Example MCP `call_tool` request payload:
 
-**_NOTE:_** The library relies on the `GOOGLE_ABUSE_EXEMPTION` cookie (the cookie is not always needed), so if you get an unexpected HTTP status code, please go to https://www.google.com/travel/flights, do the captcha, and try once again. (The cookie is gotten from your browser database using https://github.com/browserutils/kooky)
-
-```
-session := flights.New()
-```
-### 1. Price graph
-Find the cheapest flights from San Francisco to New York. The call uses the "Price graph" subsection of the Google Flights website.
-#### Google Flights API:
-```
-offers, err := session.GetPriceGraph(
-    context.Background(),
-    flights.PriceGraphArgs{
-        RangeStartDate: time.Now().AddDate(0, 0, 30),
-        RangeEndDate:   time.Now().AddDate(0, 0, 60),
-        TripLength:     7,
-        SrcCities:      []string{"San Francisco"},
-        DstCities:      []string{"New York"},
-        Options:        flights.OptionsDefault(),
-    },
-)
-if err != nil {
-    log.Fatal(err)
+```json
+{
+  "name": "find_cheapest_offers",
+  "arguments": {
+    "rangeStartDate": "2024-11-01",
+    "rangeEndDate": "2024-11-15",
+    "tripLengths": [5, 7],
+    "srcCities": ["San Francisco"],
+    "dstCities": ["New York"],
+    "currency": "USD",
+    "maxPrice": 350
+  }
 }
-fmt.Println(offers)
-```
-Example output:
-```
-[{2023-08-31 2023-09-07 245} {2023-09-01 2023-09-08 216} {2023-09-02 2023-09-09 180} {2023-09-03 2023-09-10 201} {2023-09-04 2023-09-11 225} {2023-09-05 2023-09-12 173}...
 ```
 
-#### Google Flights website:
+The server responds with a short textual summary (suitable for chat display) and structured JSON containing the
+collection of matching offers. Each offer includes start and return dates, airport codes, price, trip length, currency,
+and a shareable Google Flights link.
 
-<img src="https://github.com/krisukox/google-flights-api/assets/38990293/c2cc5c50-2401-4c93-8e76-d7e8073c9f11" alt="drawing" width="800"/>
+## Development notes
 
-### 2. Serialize URL
-```
-url, err := session.SerializeURL(
-    context.Background(),
-    flights.Args{
-        Date:        time.Now().AddDate(0, 0, 30),
-        ReturnDate:  time.Now().AddDate(0, 0, 37),
-        SrcCities:   []string{"San Diego"},
-        SrcAirports: []string{"LAX"},
-        DstCities:   []string{"New York", "Philadelphia"},
-        Options:     flights.OptionsDefault(),
-    },
-)
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Println(url)
-```
-Example output:
-```
-https://www.google.com/travel/flights/search?tfs=CBwQAhpAEgoyMDIzLTA4LTMxagwIAxIIL20vMDcxdnJqBwgBEgNMQVhyDQgDEgkvbS8wMl8yODZyDAgDEggvbS8wZGNsZxpAEgoyMDIzLTA5LTA3ag0IAxIJL20vMDJfMjg2agwIAxIIL20vMGRjbGdyDAgDEggvbS8wNzF2cnIHCAESA0xBWEABSAFwAYIBCwj___________8BmAEB&curr=USD&hl=en
-```
-### 3. Get offers
+- Formatting: run `gofmt`.
+- Tests: `go test ./...` (requires network access to fetch module dependencies on first run).
+- Logging: both the MCP server and cheap-offer searcher emit verbose logs to aid debugging (`[MCP]` and `[CheapOffers]`
+  prefixes).
 
-The call below uses Spanish city names:
-```
-offers, priceRange, err := session.GetOffers(
-    context.Background(),
-    flights.Args{
-        Date:       time.Now().AddDate(0, 0, 30),
-        ReturnDate: time.Now().AddDate(0, 0, 37),
-        SrcCities:  []string{"Madrid"},
-        DstCities:  []string{"Estocolmo"},
-        Options:    flights.Options{
-            Travelers: flights.Travelers{Adults: 2},
-            Currency:  currency.EUR,
-            Stops:     flights.Stop1,
-            Class:     flights.Economy,
-            TripType:  flights.RoundTrip,
-            Lang:      language.Spanish,
-        },
-    },
-)
-if err != nil {
-    log.Fatal(err)
-}
+## License
 
-if priceRange != nil {
-    fmt.Printf("High price %d\n", int(priceRange.High))
-    fmt.Printf("Low price %d\n", int(priceRange.Low))
-}
-fmt.Println(offers)
-```
+Distributed under the terms of the `LICENSE` file.
 
-Example output:
-```
-High price 710
-Low price 415
-[{StartDate: 2023-08-31 22:30:00 +0000 UTC
-ReturnDate: 2023-09-07 00:00:00 +0000 UTC
-Price: 296
-Flight: [DepAirportCode: MAD DepAirportName: Adolfo Suárez Madrid–Barajas Airport ArrAirportName: Josep Tarradellas Barcelona-El Prat Airport ArrAirportCode: BCN DepTime: 2023-08-31 22:30:00 +0000 UTC ArrTime: 2023-08-31 23:50:00 +0000 UTC Duration: 1h20m0s Airplane: Airbus A321 FlightNumber: VY 1009 AirlineName: Vueling Legroom: 29 inches DepAirportCode: BCN DepAirportName: Josep Tarradellas Barcelona-El Prat Airport ArrAirportName: Stockholm Arlanda Airport ArrAirportCode: ARN DepTime: 2023-09-01 06:35:00 +0000 UTC ArrTime: 2023-09-01 10:20:00 +0000 UTC Duration: 3h45m0s Airplane: Airbus A320 FlightNumber: VY 1265 AirlineName: Vueling Legroom: 29 inches]
-SrcAirportCode: MAD
-DstAirportCode: ARN
-FlightDuration: 11h50m0s}
- {StartDate: 2023-08-31 06:20:00 +0000 UTC
-ReturnDate: 2023-09-07 00:00:00 +0000 UTC
-Price: 355
-Flight: [DepAirportCode: MAD DepAirportName: Adolfo Suárez Madrid–Barajas Airport ArrAirportName: Brussels Airport ArrAirportCode: BRU DepTime: 2023-08-31 06:20:00 +0000 UTC ArrTime: 2023-08-31 08:35:00 +0000 UTC Duration: 2h15m0s Airplane: Airbus A320 FlightNumber: SN 3732 AirlineName: Brussels Airlines Legroom: 30 inches DepAirportCode: BRU DepAirportName: Brussels Airport ArrAirportName: Bromma Stockholm Airport ArrAirportCode: BMA DepTime: 2023-08-31 09:50:00 +0000 UTC ArrTime: 2023-08-31 12:00:00 +0000 UTC Duration: 2h10m0s Airplane: Airbus A319 FlightNumber: SN 2303 AirlineName: Brussels Airlines Legroom: 30 inches]
-SrcAirportCode: MAD
-DstAirportCode: BMA
-FlightDuration: 5h40m0s}
- {StartDate: 2023-08-31 10:15:00 +0000 UTC
-ReturnDate: 2023-09-07 00:00:00 +0000 UTC
-Price: 370
-Flight: [DepAirportCode: MAD DepAirportName: Adolfo Suárez Madrid–Barajas Airport ArrAirportName: Stockholm Arlanda Airport ArrAirportCode: ARN DepTime: 2023-08-31 10:15:00 +0000 UTC ArrTime: 2023-08-31 14:10:00 +0000 UTC Duration: 3h55m0s Airplane: Airbus A320 FlightNumber: IB 3314 AirlineName: Iberia Legroom: 28 inches]
-SrcAirportCode: MAD
-DstAirportCode: ARN
-FlightDuration: 3h55m0s}
-...
-```
+## Fork
 
-#### Google Flights website
-
-<img src="https://github.com/krisukox/google-flights-api/assets/38990293/8a47ed4a-e54a-4917-9459-8994230b5d94" alt="drawing" width="800"/>
-
-
-### More advanced examples:
-```
-go run ./examples/example1/main.go
-go run ./examples/example2/main.go
-go run ./examples/example3/main.go
-```
-
-## Bug / Feature / Suggestion
-
-If you've found a bug, have a suggestion, or a feature you're looking for is not yet implemented, please feel free to [open an issue](https://github.com/krisukox/google-flights-api/issues). I'll try to handle it ASAP.
+This project is a fork of the [Google Flights API](https://github.com/krisukox/google-flights-api). The main difference is that it implements the [Model Context Protocol](https://spec.modelcontextprotocol.io/) and the `MaxPrice` parameter.
