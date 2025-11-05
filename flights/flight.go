@@ -21,6 +21,9 @@ import (
 const (
 	flightAirportConst rune = '0'
 	flightCityConst    rune = '5'
+	// maxLocationsPerRequest is the maximum number of locations that can be
+	// sent in a request. Google Flights only allows 7 locations per request.
+	maxLocationsPerRequest = 7
 )
 
 // Google Flight API requests need different enum values than Google Flight URLs
@@ -305,6 +308,81 @@ func getSectionOffers(bytesToDecode []byte, returnDate time.Time) ([]FullOffer, 
 	return allOffers, &priceRange, nil
 }
 
+type locationGroup struct {
+	cities   []string
+	airports []string
+}
+
+func splitLocations(cities, airports []string) []locationGroup {
+	total := len(cities) + len(airports)
+	if total == 0 {
+		return []locationGroup{{}}
+	}
+
+	type location struct {
+		value  string
+		isCity bool
+	}
+
+	combined := make([]location, 0, total)
+	for _, airport := range airports {
+		combined = append(combined, location{value: airport})
+	}
+	for _, city := range cities {
+		combined = append(combined, location{value: city, isCity: true})
+	}
+
+	chunks := []locationGroup{}
+	for start := 0; start < len(combined); start += maxLocationsPerRequest {
+		end := start + maxLocationsPerRequest
+		if end > len(combined) {
+			end = len(combined)
+		}
+
+		group := locationGroup{}
+		for _, loc := range combined[start:end] {
+			if loc.isCity {
+				group.cities = append(group.cities, loc.value)
+				continue
+			}
+			group.airports = append(group.airports, loc.value)
+		}
+		chunks = append(chunks, group)
+	}
+
+	return chunks
+}
+
+func (s *Session) getOffersForArgs(ctx context.Context, args Args) ([]FullOffer, *PriceRange, error) {
+	resp, err := s.doRequestFlights(ctx, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body := bufio.NewReader(resp.Body)
+	skipPrefix(body)
+
+	offers := []FullOffer{}
+	var priceRange *PriceRange
+
+	for {
+		readLine(body) // skip line
+		bytesToDecode, err := getInnerBytes(body)
+		if err != nil {
+			return offers, priceRange, nil
+		}
+
+		newOffers, newPriceRange, _ := getSectionOffers(bytesToDecode, args.ReturnDate)
+		if newOffers != nil {
+			offers = append(offers, newOffers...)
+		}
+		if newPriceRange != nil {
+			priceRange = newPriceRange
+		}
+	}
+}
+
 // GetOffers retrieves offers from the Google Flight search. The city names should be provided in the language
 // described by args.Lang. The offers are returned in a slice of [FullOffer].
 //
@@ -320,31 +398,33 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]FullOffer, *Price
 		return nil, nil, err
 	}
 
+	srcGroups := splitLocations(args.SrcCities, args.SrcAirports)
+	dstGroups := splitLocations(args.DstCities, args.DstAirports)
+
 	finalOffers := []FullOffer{}
 	var finalPriceRange *PriceRange
 
-	resp, err := s.doRequestFlights(ctx, args)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
+	for _, srcGroup := range srcGroups {
+		for _, dstGroup := range dstGroups {
+			batchArgs := args
+			batchArgs.SrcCities = srcGroup.cities
+			batchArgs.SrcAirports = srcGroup.airports
+			batchArgs.DstCities = dstGroup.cities
+			batchArgs.DstAirports = dstGroup.airports
 
-	body := bufio.NewReader(resp.Body)
-	skipPrefix(body)
+			offers, priceRange, err := s.getOffersForArgs(ctx, batchArgs)
+			if err != nil {
+				return nil, nil, err
+			}
 
-	for {
-		readLine(body) // skip line
-		bytesToDecode, err := getInnerBytes(body)
-		if err != nil {
-			return finalOffers, finalPriceRange, nil
-		}
-
-		offers, priceRange, _ := getSectionOffers(bytesToDecode, args.ReturnDate)
-		if offers != nil {
-			finalOffers = append(finalOffers, offers...)
-		}
-		if priceRange != nil {
-			finalPriceRange = priceRange
+			if offers != nil {
+				finalOffers = append(finalOffers, offers...)
+			}
+			if priceRange != nil {
+				finalPriceRange = priceRange
+			}
 		}
 	}
+
+	return finalOffers, finalPriceRange, nil
 }
