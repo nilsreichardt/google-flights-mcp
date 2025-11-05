@@ -1,9 +1,10 @@
 # Google Flights MCP Server
 
 This project hosts an implementation of the [Model Context Protocol (MCP)](https://spec.modelcontextprotocol.io/)
-server that can surface Google Flights data. The MCP implementation exposes three tools:
+server that can surface Google Flights data. The MCP implementation exposes four tools:
 
-- `find_cheapest_offers` — finds itineraries that undercut Google's advertised low price (optionally capped by `maxPrice`).
+- `find_historically_cheap_offers` — finds itineraries that undercut Google's advertised low price.
+- `find_offers_under_price` — finds itineraries whose price stays beneath a caller-specified ceiling.
 - `get_price_graph` — returns the raw price graph entries for a date window and trip length.
 - `get_offers` — fetches the detailed itineraries (including legs and price history) for specific departure/return dates.
 
@@ -14,7 +15,7 @@ focus of this project.
 ## Highlights
 
 - MCP-compliant server ready to plug into tooling that supports the protocol.
-- Cheap-offer finder filters by Google's low price (historically cheap) or an explicit `maxPrice` hard ceiling.
+- Dedicated tool for historically cheap flights and a separate one for hard price ceilings.
 - Direct access to Google Flights price graph data and full itinerary listings via dedicated tools.
 - Returns shareable Google Flights URLs so the itinerary can be inspected or booked quickly.
 
@@ -38,7 +39,7 @@ Command-line flags:
 - `--port` (default `8080` or `PORT` env var) – port to listen on.
 
 The server speaks the MCP Server-Sent Events transport. Point your MCP client at `http://<host>:<port>` and it will
-discover all three tools automatically.
+discover all four tools automatically.
 
 ## Deploying
 
@@ -56,7 +57,7 @@ Set your project ID in `deploy.sh` and run:
 
 ## Tool contracts
 
-### `find_cheapest_offers`
+### `find_historically_cheap_offers`
 
 Input parameters (all currency values are interpreted in the selected currency):
 
@@ -71,14 +72,49 @@ Input parameters (all currency values are interpreted in the selected currency):
 - `stops` *(optional)* – maximum stops (`nonstop`, `stop1`, `stop2`, `any`), default `any`.
 - `class` *(optional)* – cabin class (`economy`, `premium_economy`, `business`, `first`), default `economy`.
 - `tripType` *(optional)* – `round_trip` or `one_way`, default `round_trip`.
-- `maxPrice` *(optional)* – hard price ceiling. When omitted, the server only returns flights that undercut Google's
-  advertised “low price” for the itinerary.
 
 Example MCP `call_tool` request payload:
 
 ```json
 {
-  "name": "find_cheapest_offers",
+  "name": "find_historically_cheap_offers",
+  "arguments": {
+    "rangeStartDate": "2024-11-01",
+    "rangeEndDate": "2024-11-15",
+    "tripLengths": [5, 7],
+    "srcCities": ["San Francisco"],
+    "dstCities": ["New York"],
+    "currency": "USD"
+  }
+}
+```
+
+This tool responds with a short textual summary (suitable for chat display) and structured JSON containing the
+collection of matching offers. Each offer includes start and return dates, airport codes, price, trip length, currency,
+and a shareable Google Flights link.
+
+### `find_offers_under_price`
+
+Input parameters (all currency values are interpreted in the selected currency):
+
+- `rangeStartDate` *(required)* – earliest departure date to consider (`YYYY-MM-DD`).
+- `rangeEndDate` *(required)* – latest departure date to consider (`YYYY-MM-DD`).
+- `tripLengths` *(required)* – array of positive integers describing trip durations in days.
+- `srcCities` *(required)* – list of origin cities as accepted by Google Flights.
+- `dstCities` *(required)* – list of destination cities as accepted by Google Flights.
+- `maxPrice` *(required)* – hard price ceiling; only itineraries priced at or below this value are returned.
+- `language` *(optional)* – BCP 47 language tag, default `en`.
+- `currency` *(optional)* – ISO 4217 currency code, default `USD`.
+- `adults`, `children`, `infantInSeat`, `infantOnLap` *(optional)* – traveler counts, adults default to `1`.
+- `stops` *(optional)* – maximum stops (`nonstop`, `stop1`, `stop2`, `any`), default `any`.
+- `class` *(optional)* – cabin class (`economy`, `premium_economy`, `business`, `first`), default `economy`.
+- `tripType` *(optional)* – `round_trip` or `one_way`, default `round_trip`.
+
+Example MCP `call_tool` request payload:
+
+```json
+{
+  "name": "find_offers_under_price",
   "arguments": {
     "rangeStartDate": "2024-11-01",
     "rangeEndDate": "2024-11-15",
@@ -91,9 +127,7 @@ Example MCP `call_tool` request payload:
 }
 ```
 
-This tool responds with a short textual summary (suitable for chat display) and structured JSON containing the
-collection of matching offers. Each offer includes start and return dates, airport codes, price, trip length, currency,
-and a shareable Google Flights link.
+This tool returns the matching itineraries along with their shareable Google Flights links, restricted to those priced at or below the requested ceiling.
 
 ### `get_price_graph`
 
@@ -166,4 +200,4 @@ Distributed under the terms of the `LICENSE` file.
 
 ## Fork
 
-This project is a fork of the [Google Flights API](https://github.com/krisukox/google-flights-api). The main difference is that it implements the [Model Context Protocol](https://spec.modelcontextprotocol.io/) and the `MaxPrice` parameter.
+This project is a fork of the [Google Flights API](https://github.com/krisukox/google-flights-api). The main difference is that it implements the [Model Context Protocol](https://spec.modelcontextprotocol.io/) and the additional `find_offers_under_price` tool.

@@ -1,7 +1,6 @@
 // This example iterates over PriceGraph offers concurrently and prints only
-// those whose price is cheaper than the low price of the offer (or below an
-// explicit max price when provided). This mirrors Example 2, but the requests
-// are sent concurrently.
+// those whose price is cheaper than the low price reported by Google Flights.
+// This mirrors Example 2, but the requests are sent concurrently.
 package main
 
 import (
@@ -36,7 +35,7 @@ func main() {
 		Lang:      language.English,
 	}
 
-	results, err := cheapoffers.Find(
+	results, err := cheapoffers.FindHistorical(
 		context.Background(),
 		session,
 		cheapoffers.Args{

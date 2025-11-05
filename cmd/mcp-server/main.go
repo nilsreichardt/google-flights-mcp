@@ -37,14 +37,23 @@ type travelOptionsParams struct {
 	TripType     string `json:"tripType,omitempty" jsonschema:"Optional trip type: round_trip or one_way (defaults to round_trip)"`
 }
 
-type findCheapestOffersParams struct {
+type findHistoricallyCheapOffersParams struct {
 	RangeStartDate string   `json:"rangeStartDate" jsonschema:"Earliest departure date to consider (YYYY-MM-DD)"`
 	RangeEndDate   string   `json:"rangeEndDate" jsonschema:"Last departure date to consider (YYYY-MM-DD)"`
 	TripLengths    []int    `json:"tripLengths" jsonschema:"Trip lengths in days (e.g. [5,6])"`
 	SrcCities      []string `json:"srcCities" jsonschema:"City names accepted by Google Flights"`
 	DstCities      []string `json:"dstCities" jsonschema:"Destination city names accepted by Google Flights"`
 	travelOptionsParams
-	MaxPrice *float64 `json:"maxPrice,omitempty" jsonschema:"Optional maximum price threshold in the selected currency. If not provided, historical low prices are used."`
+}
+
+type findOffersUnderPriceParams struct {
+	RangeStartDate string   `json:"rangeStartDate" jsonschema:"Earliest departure date to consider (YYYY-MM-DD)"`
+	RangeEndDate   string   `json:"rangeEndDate" jsonschema:"Last departure date to consider (YYYY-MM-DD)"`
+	TripLengths    []int    `json:"tripLengths" jsonschema:"Trip lengths in days (e.g. [5,6])"`
+	SrcCities      []string `json:"srcCities" jsonschema:"City names accepted by Google Flights"`
+	DstCities      []string `json:"dstCities" jsonschema:"Destination city names accepted by Google Flights"`
+	MaxPrice       float64  `json:"maxPrice" jsonschema:"Maximum price threshold in the selected currency (must be > 0)"`
+	travelOptionsParams
 }
 
 type offerResponse struct {
@@ -58,7 +67,7 @@ type offerResponse struct {
 	ShareableLink string  `json:"shareableLink"`
 }
 
-type findCheapestOffersResponse struct {
+type cheapOfferListResponse struct {
 	Offers []offerResponse `json:"offers"`
 }
 
@@ -306,51 +315,43 @@ type server struct {
 	session *flights.Session
 }
 
-func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest, params findCheapestOffersParams) (*mcp.CallToolResult, findCheapestOffersResponse, error) {
-	log.Printf("[MCP] findCheapestOffers called with parameters:")
+func (s *server) findHistoricallyCheapOffers(ctx context.Context, _ *mcp.CallToolRequest, params findHistoricallyCheapOffersParams) (*mcp.CallToolResult, cheapOfferListResponse, error) {
+	log.Printf("[MCP] findHistoricallyCheapOffers called with parameters:")
 	log.Printf("[MCP]   RangeStartDate: %s", params.RangeStartDate)
 	log.Printf("[MCP]   RangeEndDate: %s", params.RangeEndDate)
 	log.Printf("[MCP]   TripLengths: %v", params.TripLengths)
 	log.Printf("[MCP]   SrcCities: %v", params.SrcCities)
 	log.Printf("[MCP]   DstCities: %v", params.DstCities)
 	logTravelOptions(params.travelOptionsParams)
-	if params.MaxPrice != nil {
-		log.Printf("[MCP]   MaxPrice: %.0f", *params.MaxPrice)
-	} else {
-		log.Printf("[MCP]   MaxPrice: <nil>")
-	}
 	startDate, err := time.Parse(time.DateOnly, params.RangeStartDate)
 	if err != nil {
-		return nil, findCheapestOffersResponse{}, fmt.Errorf("parse rangeStartDate: %w", err)
+		return nil, cheapOfferListResponse{}, fmt.Errorf("parse rangeStartDate: %w", err)
 	}
 	endDate, err := time.Parse(time.DateOnly, params.RangeEndDate)
 	if err != nil {
-		return nil, findCheapestOffersResponse{}, fmt.Errorf("parse rangeEndDate: %w", err)
+		return nil, cheapOfferListResponse{}, fmt.Errorf("parse rangeEndDate: %w", err)
 	}
 	if len(params.TripLengths) == 0 {
-		return nil, findCheapestOffersResponse{}, fmt.Errorf("tripLengths must contain at least one value")
+		return nil, cheapOfferListResponse{}, fmt.Errorf("tripLengths must contain at least one value")
 	}
 	for _, l := range params.TripLengths {
 		if l <= 0 {
-			return nil, findCheapestOffersResponse{}, fmt.Errorf("tripLengths must be positive values")
+			return nil, cheapOfferListResponse{}, fmt.Errorf("tripLengths must be positive values")
 		}
 	}
 	if len(params.SrcCities) == 0 {
-		return nil, findCheapestOffersResponse{}, fmt.Errorf("at least one source city is required")
+		return nil, cheapOfferListResponse{}, fmt.Errorf("at least one source city is required")
 	}
 	if len(params.DstCities) == 0 {
-		return nil, findCheapestOffersResponse{}, fmt.Errorf("at least one destination city is required")
-	}
-	if params.MaxPrice != nil && *params.MaxPrice <= 0 {
-		return nil, findCheapestOffersResponse{}, fmt.Errorf("maxPrice must be greater than zero")
+		return nil, cheapOfferListResponse{}, fmt.Errorf("at least one destination city is required")
 	}
 
 	options, curr, err := buildFlightOptions(params.travelOptionsParams)
 	if err != nil {
-		return nil, findCheapestOffersResponse{}, err
+		return nil, cheapOfferListResponse{}, err
 	}
 
-	results, err := cheapoffers.Find(
+	results, err := cheapoffers.FindHistorical(
 		ctx,
 		s.session,
 		cheapoffers.Args{
@@ -360,14 +361,13 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 			SrcCities:      params.SrcCities,
 			DstCities:      params.DstCities,
 			Options:        options,
-			MaxPrice:       params.MaxPrice,
 		},
 	)
 	if err != nil {
-		return nil, findCheapestOffersResponse{}, err
+		return nil, cheapOfferListResponse{}, err
 	}
 
-	response := findCheapestOffersResponse{Offers: make([]offerResponse, 0, len(results))}
+	response := cheapOfferListResponse{Offers: make([]offerResponse, 0, len(results))}
 	for _, res := range results {
 		response.Offers = append(response.Offers, offerResponse{
 			StartDate:     res.StartDate.Format(time.RFC3339),
@@ -400,7 +400,102 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 			&mcp.TextContent{Text: summary.String()},
 		},
 	}
-	log.Printf("[MCP] Returning %d offers to client", len(response.Offers))
+	log.Printf("[MCP] Returning %d historically cheap offers to client", len(response.Offers))
+	return result, response, nil
+}
+
+func (s *server) findOffersUnderPrice(ctx context.Context, _ *mcp.CallToolRequest, params findOffersUnderPriceParams) (*mcp.CallToolResult, cheapOfferListResponse, error) {
+	log.Printf("[MCP] findOffersUnderPrice called with parameters:")
+	log.Printf("[MCP]   RangeStartDate: %s", params.RangeStartDate)
+	log.Printf("[MCP]   RangeEndDate: %s", params.RangeEndDate)
+	log.Printf("[MCP]   TripLengths: %v", params.TripLengths)
+	log.Printf("[MCP]   SrcCities: %v", params.SrcCities)
+	log.Printf("[MCP]   DstCities: %v", params.DstCities)
+	log.Printf("[MCP]   MaxPrice: %.0f", params.MaxPrice)
+	logTravelOptions(params.travelOptionsParams)
+
+	startDate, err := time.Parse(time.DateOnly, params.RangeStartDate)
+	if err != nil {
+		return nil, cheapOfferListResponse{}, fmt.Errorf("parse rangeStartDate: %w", err)
+	}
+	endDate, err := time.Parse(time.DateOnly, params.RangeEndDate)
+	if err != nil {
+		return nil, cheapOfferListResponse{}, fmt.Errorf("parse rangeEndDate: %w", err)
+	}
+	if len(params.TripLengths) == 0 {
+		return nil, cheapOfferListResponse{}, fmt.Errorf("tripLengths must contain at least one value")
+	}
+	for _, l := range params.TripLengths {
+		if l <= 0 {
+			return nil, cheapOfferListResponse{}, fmt.Errorf("tripLengths must be positive values")
+		}
+	}
+	if len(params.SrcCities) == 0 {
+		return nil, cheapOfferListResponse{}, fmt.Errorf("at least one source city is required")
+	}
+	if len(params.DstCities) == 0 {
+		return nil, cheapOfferListResponse{}, fmt.Errorf("at least one destination city is required")
+	}
+	if params.MaxPrice <= 0 {
+		return nil, cheapOfferListResponse{}, fmt.Errorf("maxPrice must be greater than zero")
+	}
+
+	options, curr, err := buildFlightOptions(params.travelOptionsParams)
+	if err != nil {
+		return nil, cheapOfferListResponse{}, err
+	}
+
+	results, err := cheapoffers.FindUnderPrice(
+		ctx,
+		s.session,
+		cheapoffers.UnderPriceArgs{
+			RangeStartDate: startDate,
+			RangeEndDate:   endDate,
+			TripLengths:    params.TripLengths,
+			SrcCities:      params.SrcCities,
+			DstCities:      params.DstCities,
+			Options:        options,
+			MaxPrice:       params.MaxPrice,
+		},
+	)
+	if err != nil {
+		return nil, cheapOfferListResponse{}, err
+	}
+
+	response := cheapOfferListResponse{Offers: make([]offerResponse, 0, len(results))}
+	for _, res := range results {
+		response.Offers = append(response.Offers, offerResponse{
+			StartDate:     res.StartDate.Format(time.RFC3339),
+			ReturnDate:    res.ReturnDate.Format(time.RFC3339),
+			SrcAirport:    res.SrcAirport,
+			DstAirport:    res.DstAirport,
+			Price:         res.Price,
+			TripLength:    res.TripLength,
+			Currency:      curr.String(),
+			ShareableLink: res.ShareableLink,
+		})
+	}
+
+	var summary strings.Builder
+	summary.WriteString(fmt.Sprintf("Found %d offer(s) under %.0f %s.", len(response.Offers), params.MaxPrice, curr.String()))
+	if len(response.Offers) > 0 {
+		cheapest := response.Offers[0]
+		summary.WriteString(fmt.Sprintf(" Cheapest: %s -> %s on %s for %.0f %s (%d days).",
+			cheapest.SrcAirport,
+			cheapest.DstAirport,
+			cheapest.StartDate,
+			cheapest.Price,
+			cheapest.Currency,
+			cheapest.TripLength,
+		))
+	}
+
+	result := &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: summary.String()},
+		},
+	}
+	log.Printf("[MCP] Returning %d offers under %.0f %s to client", len(response.Offers), params.MaxPrice, curr.String())
 	return result, response, nil
 }
 
@@ -638,11 +733,20 @@ func main() {
 	mcp.AddTool(
 		mcpServer,
 		&mcp.Tool{
-			Name:        "find_cheapest_offers",
-			Title:       "Find cheapest Google Flights offers",
-			Description: "Finds itineraries priced below Google's low price (or an optional max price) for the selected window.",
+			Name:        "find_historically_cheap_offers",
+			Title:       "Find historically cheap Google Flights offers",
+			Description: "Finds itineraries priced below Google's advertised low price for the selected window.",
 		},
-		s.findCheapestOffers,
+		s.findHistoricallyCheapOffers,
+	)
+	mcp.AddTool(
+		mcpServer,
+		&mcp.Tool{
+			Name:        "find_offers_under_price",
+			Title:       "Find Google Flights offers under a price ceiling",
+			Description: "Finds itineraries whose total cost stays below a specified hard ceiling.",
+		},
+		s.findOffersUnderPrice,
 	)
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
