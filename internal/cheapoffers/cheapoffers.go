@@ -3,6 +3,7 @@ package cheapoffers
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -34,6 +35,13 @@ type Result struct {
 // Find locates offers cheaper than Google's advertised low price within the given range.
 // It mirrors the behaviour of examples/example3 but returns structured data instead of logging.
 func Find(ctx context.Context, session *flights.Session, args Args) ([]Result, error) {
+	log.Printf("[CheapOffers] Find called with:")
+	log.Printf("[CheapOffers]   RangeStartDate: %s", args.RangeStartDate.Format("2006-01-02"))
+	log.Printf("[CheapOffers]   RangeEndDate: %s", args.RangeEndDate.Format("2006-01-02"))
+	log.Printf("[CheapOffers]   TripLengths: %v", args.TripLengths)
+	log.Printf("[CheapOffers]   SrcCities: %v", args.SrcCities)
+	log.Printf("[CheapOffers]   DstCities: %v", args.DstCities)
+	log.Printf("[CheapOffers]   Options: %+v", args.Options)
 	if err := validateArgs(args); err != nil {
 		return nil, err
 	}
@@ -61,10 +69,12 @@ func Find(ctx context.Context, session *flights.Session, args Args) ([]Result, e
 		return allResults[i].Price < allResults[j].Price
 	})
 
+	log.Printf("[CheapOffers] Find completed: total %d cheap offers found", len(allResults))
 	return allResults, nil
 }
 
 func findForTripLength(ctx context.Context, session *flights.Session, args Args, tripLength int) ([]Result, error) {
+	log.Printf("[CheapOffers] Processing trip length: %d days", tripLength)
 	priceGraphOffers, err := session.GetPriceGraph(
 		ctx,
 		flights.PriceGraphArgs{
@@ -76,6 +86,7 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 			Options:        args.Options,
 		},
 	)
+	log.Printf("[CheapOffers] GetPriceGraph returned %d offers for trip length %d", len(priceGraphOffers), tripLength)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +109,9 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 		go func() {
 			defer wg.Done()
 
+			log.Printf("[CheapOffers] Processing offer: %s -> %s, Price: %.0f",
+				offer.StartDate.Format("2006-01-02"), offer.ReturnDate.Format("2006-01-02"),
+				offer.Price)
 			fullOffers, _, err := session.GetOffers(
 				ctxWithCancel,
 				flights.Args{
@@ -108,6 +122,7 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 					Options:    args.Options,
 				},
 			)
+			log.Printf("[CheapOffers] GetOffers returned %d full offers", len(fullOffers))
 			if err != nil {
 				cancel()
 				resultsCh <- resultOrError{err: err}
@@ -137,6 +152,11 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 					Options:     args.Options,
 				},
 			)
+			if priceRange != nil {
+				log.Printf("[CheapOffers] Price range for %s->%s: Low=%.0f, High=%.0f",
+					bestOffer.SrcAirportCode, bestOffer.DstAirportCode,
+					priceRange.Low, priceRange.High)
+			}
 			if err != nil {
 				cancel()
 				resultsCh <- resultOrError{err: err}
@@ -147,8 +167,11 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 			}
 
 			if bestOffer.Price >= priceRange.Low {
+				log.Printf("[CheapOffers] Offer price %.0f >= low price %.0f, skipping", bestOffer.Price, priceRange.Low)
 				return
 			}
+			log.Printf("[CheapOffers] Found cheap offer: %s->%s, price %.0f < low price %.0f",
+				bestOffer.SrcAirportCode, bestOffer.DstAirportCode, bestOffer.Price, priceRange.Low)
 
 			url, err := session.SerializeURL(
 				ctxWithCancel,
@@ -203,6 +226,8 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 	if firstErr != nil {
 		return nil, firstErr
 	}
+
+	log.Printf("[CheapOffers] Completed processing trip length %d: found %d cheap offers", tripLength, len(results))
 
 	return results, nil
 }

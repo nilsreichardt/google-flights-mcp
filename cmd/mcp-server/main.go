@@ -56,6 +56,15 @@ type server struct {
 }
 
 func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest, params findCheapestOffersParams) (*mcp.CallToolResult, findCheapestOffersResponse, error) {
+	log.Printf("[MCP] findCheapestOffers called with parameters:\n"+
+		"[MCP]   RangeStartDate: %s\n"+
+		"[MCP]   RangeEndDate: %s\n"+
+		"[MCP]   TripLengths: %v\n"+
+		"[MCP]   SrcCities: %v\n"+
+		"[MCP]   DstCities: %v\n"+
+		"[MCP]   Adults: %d",
+		params.RangeStartDate, params.RangeEndDate, params.TripLengths, params.SrcCities, params.DstCities,
+		params.Adults)
 	startDate, err := time.Parse(time.DateOnly, params.RangeStartDate)
 	if err != nil {
 		return nil, findCheapestOffersResponse{}, fmt.Errorf("parse rangeStartDate: %w", err)
@@ -163,6 +172,7 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 			&mcp.TextContent{Text: summary.String()},
 		},
 	}
+	log.Printf("[MCP] Returning %d offers to client", len(response.Offers))
 	return result, response, nil
 }
 
