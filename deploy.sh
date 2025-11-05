@@ -1,5 +1,5 @@
-REGION="europe-west1"
-PROJECT_ID="..."
+REGION=${REGION:-"europe-west1"}
+PROJECT_ID=${PROJECT_ID:-"your-project-id"}
 # Need to be exported for sudo to work
 export IMAGE="gcr.io/$PROJECT_ID/google-flights-cheapest-offers:latest"
 
