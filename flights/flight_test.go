@@ -274,6 +274,56 @@ func TestGetOffersMock(t *testing.T) {
 	}
 }
 
+func TestGetOffersSplitsRequests(t *testing.T) {
+	timeNow = func() time.Time {
+		t, _ := time.Parse(time.RFC3339, "2024-01-15T00:00:00Z")
+		return t
+	}
+	defer func() { timeNow = time.Now }()
+
+	date, _ := time.Parse(time.RFC3339, "2024-01-20T00:00:00Z")
+	returnDate, _ := time.Parse(time.RFC3339, "2024-01-25T00:00:00Z")
+
+	srcAirports := []string{"AAA", "AAB", "AAC", "AAD", "AAE", "AAF", "AAG", "AAH"}
+	dstAirports := []string{"BAA", "BAB", "BAC", "BAD", "BAE", "BAF", "BAG", "BAH"}
+
+	httpClientMock, err := newHttpClientMock(
+		t,
+		"testdata/flight.resp",
+		"testdata/flight.resp",
+		"testdata/flight.resp",
+		"testdata/flight.resp",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session := &Session{
+		client: httpClientMock,
+	}
+
+	args := Args{
+		Date:        date,
+		ReturnDate:  returnDate,
+		SrcAirports: srcAirports,
+		DstAirports: dstAirports,
+		Options:     OptionsDefault(),
+	}
+
+	offers, _, err := session.GetOffers(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(offers) != 84 {
+		t.Fatalf("expected 84 offers from split requests, got %d", len(offers))
+	}
+
+	if len(httpClientMock.Responses) != 0 {
+		t.Fatalf("expected all mock responses to be consumed, remaining: %d", len(httpClientMock.Responses))
+	}
+}
+
 func TestFlightReqData(t *testing.T) {
 	session, err := New()
 	if err != nil {
