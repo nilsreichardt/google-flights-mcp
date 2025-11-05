@@ -14,4 +14,5 @@ gcloud run deploy google-flights-cheapest-offers \
     --platform managed \
     --allow-unauthenticated \
     --port 8080 \
-    --project $PROJECT_ID
+    --project $PROJECT_ID \
+    --timeout 15m
