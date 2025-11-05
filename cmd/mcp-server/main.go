@@ -34,6 +34,12 @@ type findCheapestOffersParams struct {
 	Language       string   `json:"language,omitempty" jsonschema:"Optional BCP 47 language tag, defaults to en"`
 	Currency       string   `json:"currency,omitempty" jsonschema:"Optional ISO 4217 currency code, defaults to USD"`
 	Adults         int      `json:"adults,omitempty" jsonschema:"Optional number of adult travelers, defaults to 1"`
+	Children       int      `json:"children,omitempty" jsonschema:"Optional number of child travelers, defaults to 0"`
+	InfantInSeat   int      `json:"infantInSeat,omitempty" jsonschema:"Optional number of infants in seat, defaults to 0"`
+	InfantOnLap    int      `json:"infantOnLap,omitempty" jsonschema:"Optional number of lap infants, defaults to 0"`
+	Stops          string   `json:"stops,omitempty" jsonschema:"Optional maximum stops preference: nonstop, stop1, stop2, any (defaults to any)"`
+	Class          string   `json:"class,omitempty" jsonschema:"Optional cabin class: economy, premium_economy, business, first (defaults to economy)"`
+	TripType       string   `json:"tripType,omitempty" jsonschema:"Optional trip type: round_trip or one_way (defaults to round_trip)"`
 }
 
 type offerResponse struct {
@@ -51,20 +57,73 @@ type findCheapestOffersResponse struct {
 	Offers []offerResponse `json:"offers"`
 }
 
+var enumValueReplacer = strings.NewReplacer("-", "", "_", "", " ", "")
+
+func normalizeEnumValue(val string) string {
+	return enumValueReplacer.Replace(strings.ToLower(val))
+}
+
+func parseStops(val string) (flights.Stops, error) {
+	switch normalizeEnumValue(val) {
+	case "nonstop":
+		return flights.Nonstop, nil
+	case "stop1", "onestop", "1stop":
+		return flights.Stop1, nil
+	case "stop2", "twostop", "2stop":
+		return flights.Stop2, nil
+	case "any", "anystops":
+		return flights.AnyStops, nil
+	default:
+		return 0, fmt.Errorf("invalid stops %q: valid values are nonstop, stop1, stop2, any", val)
+	}
+}
+
+func parseClass(val string) (flights.Class, error) {
+	switch normalizeEnumValue(val) {
+	case "economy":
+		return flights.Economy, nil
+	case "premiumeconomy":
+		return flights.PremiumEconomy, nil
+	case "business":
+		return flights.Business, nil
+	case "first":
+		return flights.First, nil
+	default:
+		return 0, fmt.Errorf("invalid class %q: valid values are economy, premium_economy, business, first", val)
+	}
+}
+
+func parseTripType(val string) (flights.TripType, error) {
+	switch normalizeEnumValue(val) {
+	case "roundtrip", "round":
+		return flights.RoundTrip, nil
+	case "oneway":
+		return flights.OneWay, nil
+	default:
+		return 0, fmt.Errorf("invalid tripType %q: valid values are round_trip, one_way", val)
+	}
+}
+
 type server struct {
 	session *flights.Session
 }
 
 func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest, params findCheapestOffersParams) (*mcp.CallToolResult, findCheapestOffersResponse, error) {
-	log.Printf("[MCP] findCheapestOffers called with parameters:\n"+
-		"[MCP]   RangeStartDate: %s\n"+
-		"[MCP]   RangeEndDate: %s\n"+
-		"[MCP]   TripLengths: %v\n"+
-		"[MCP]   SrcCities: %v\n"+
-		"[MCP]   DstCities: %v\n"+
-		"[MCP]   Adults: %d",
-		params.RangeStartDate, params.RangeEndDate, params.TripLengths, params.SrcCities, params.DstCities,
-		params.Adults)
+	log.Printf("[MCP] findCheapestOffers called with parameters:")
+	log.Printf("[MCP]   RangeStartDate: %s", params.RangeStartDate)
+	log.Printf("[MCP]   RangeEndDate: %s", params.RangeEndDate)
+	log.Printf("[MCP]   TripLengths: %v", params.TripLengths)
+	log.Printf("[MCP]   SrcCities: %v", params.SrcCities)
+	log.Printf("[MCP]   DstCities: %v", params.DstCities)
+	log.Printf("[MCP]   Language: %s", params.Language)
+	log.Printf("[MCP]   Currency: %s", params.Currency)
+	log.Printf("[MCP]   Adults: %d", params.Adults)
+	log.Printf("[MCP]   Children: %d", params.Children)
+	log.Printf("[MCP]   InfantInSeat: %d", params.InfantInSeat)
+	log.Printf("[MCP]   InfantOnLap: %d", params.InfantOnLap)
+	log.Printf("[MCP]   Stops: %s", params.Stops)
+	log.Printf("[MCP]   Class: %s", params.Class)
+	log.Printf("[MCP]   TripType: %s", params.TripType)
 	startDate, err := time.Parse(time.DateOnly, params.RangeStartDate)
 	if err != nil {
 		return nil, findCheapestOffersResponse{}, fmt.Errorf("parse rangeStartDate: %w", err)
@@ -114,12 +173,61 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 		return nil, findCheapestOffersResponse{}, fmt.Errorf("adults must be greater than zero")
 	}
 
+	children := params.Children
+	if children < 0 {
+		return nil, findCheapestOffersResponse{}, fmt.Errorf("children must be zero or greater")
+	}
+
+	infantInSeat := params.InfantInSeat
+	if infantInSeat < 0 {
+		return nil, findCheapestOffersResponse{}, fmt.Errorf("infantInSeat must be zero or greater")
+	}
+
+	infantOnLap := params.InfantOnLap
+	if infantOnLap < 0 {
+		return nil, findCheapestOffersResponse{}, fmt.Errorf("infantOnLap must be zero or greater")
+	}
+
+	stops := flights.AnyStops
+	if params.Stops != "" {
+		var parseErr error
+		stops, parseErr = parseStops(params.Stops)
+		if parseErr != nil {
+			return nil, findCheapestOffersResponse{}, parseErr
+		}
+	}
+
+	class := flights.Economy
+	if params.Class != "" {
+		var parseErr error
+		class, parseErr = parseClass(params.Class)
+		if parseErr != nil {
+			return nil, findCheapestOffersResponse{}, parseErr
+		}
+	}
+
+	tripType := flights.RoundTrip
+	if params.TripType != "" {
+		var parseErr error
+		tripType, parseErr = parseTripType(params.TripType)
+		if parseErr != nil {
+			return nil, findCheapestOffersResponse{}, parseErr
+		}
+	}
+
+	travelers := flights.Travelers{
+		Adults:       adults,
+		Children:     children,
+		InfantInSeat: infantInSeat,
+		InfantOnLap:  infantOnLap,
+	}
+
 	options := flights.Options{
-		Travelers: flights.Travelers{Adults: adults},
+		Travelers: travelers,
 		Currency:  curr,
-		Stops:     flights.AnyStops,
-		Class:     flights.Economy,
-		TripType:  flights.RoundTrip,
+		Stops:     stops,
+		Class:     class,
+		TripType:  tripType,
 		Lang:      lang,
 	}
 
