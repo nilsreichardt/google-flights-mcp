@@ -1,7 +1,7 @@
 // This example iterates over PriceGraph offers concurrently and prints only
-// those whose price is cheaper than the low price of the offer.
-// (The price is considered low by Google Flights)
-// This example is the same as Example 2, but it sends requests concurrently.
+// those whose price is cheaper than the low price of the offer (or below an
+// explicit max price when provided). This mirrors Example 2, but the requests
+// are sent concurrently.
 package main
 
 import (

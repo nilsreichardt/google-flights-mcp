@@ -40,6 +40,7 @@ type findCheapestOffersParams struct {
 	Stops          string   `json:"stops,omitempty" jsonschema:"Optional maximum stops preference: nonstop, stop1, stop2, any (defaults to any)"`
 	Class          string   `json:"class,omitempty" jsonschema:"Optional cabin class: economy, premium_economy, business, first (defaults to economy)"`
 	TripType       string   `json:"tripType,omitempty" jsonschema:"Optional trip type: round_trip or one_way (defaults to round_trip)"`
+	MaxPrice       *float64 `json:"maxPrice,omitempty" jsonschema:"Optional maximum price threshold in the selected currency. If not provided, historical low prices are used."`
 }
 
 type offerResponse struct {
@@ -124,6 +125,11 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 	log.Printf("[MCP]   Stops: %s", params.Stops)
 	log.Printf("[MCP]   Class: %s", params.Class)
 	log.Printf("[MCP]   TripType: %s", params.TripType)
+	if params.MaxPrice != nil {
+		log.Printf("[MCP]   MaxPrice: %.0f", *params.MaxPrice)
+	} else {
+		log.Printf("[MCP]   MaxPrice: <nil>")
+	}
 	startDate, err := time.Parse(time.DateOnly, params.RangeStartDate)
 	if err != nil {
 		return nil, findCheapestOffersResponse{}, fmt.Errorf("parse rangeStartDate: %w", err)
@@ -145,6 +151,9 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	if len(params.DstCities) == 0 {
 		return nil, findCheapestOffersResponse{}, fmt.Errorf("at least one destination city is required")
+	}
+	if params.MaxPrice != nil && *params.MaxPrice <= 0 {
+		return nil, findCheapestOffersResponse{}, fmt.Errorf("maxPrice must be greater than zero")
 	}
 
 	lang := language.English
@@ -241,6 +250,7 @@ func (s *server) findCheapestOffers(ctx context.Context, _ *mcp.CallToolRequest,
 			SrcCities:      params.SrcCities,
 			DstCities:      params.DstCities,
 			Options:        options,
+			MaxPrice:       params.MaxPrice,
 		},
 	)
 	if err != nil {
@@ -305,7 +315,7 @@ func main() {
 		&mcp.Tool{
 			Name:        "find_cheapest_offers",
 			Title:       "Find cheapest Google Flights offers",
-			Description: "Finds itineraries whose price is below Google's low price for the selected window.",
+			Description: "Finds itineraries priced below Google's low price (or an optional max price) for the selected window.",
 		},
 		s.findCheapestOffers,
 	)

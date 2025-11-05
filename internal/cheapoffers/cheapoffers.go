@@ -19,6 +19,7 @@ type Args struct {
 	SrcCities      []string
 	DstCities      []string
 	Options        flights.Options
+	MaxPrice       *float64
 }
 
 // Result captures the cheapest qualifying offer for a specific start date.
@@ -42,6 +43,11 @@ func Find(ctx context.Context, session *flights.Session, args Args) ([]Result, e
 	log.Printf("[CheapOffers]   SrcCities: %v", args.SrcCities)
 	log.Printf("[CheapOffers]   DstCities: %v", args.DstCities)
 	log.Printf("[CheapOffers]   Options: %+v", args.Options)
+	if args.MaxPrice != nil {
+		log.Printf("[CheapOffers]   MaxPrice: %.0f", *args.MaxPrice)
+	} else {
+		log.Printf("[CheapOffers]   MaxPrice: <nil>")
+	}
 	if err := validateArgs(args); err != nil {
 		return nil, err
 	}
@@ -142,36 +148,45 @@ func findForTripLength(ctx context.Context, session *flights.Session, args Args,
 				return
 			}
 
-			_, priceRange, err := session.GetOffers(
-				ctxWithCancel,
-				flights.Args{
-					Date:        bestOffer.StartDate,
-					ReturnDate:  bestOffer.ReturnDate,
-					SrcAirports: []string{bestOffer.SrcAirportCode},
-					DstAirports: []string{bestOffer.DstAirportCode},
-					Options:     args.Options,
-				},
-			)
-			if priceRange != nil {
-				log.Printf("[CheapOffers] Price range for %s->%s: Low=%.0f, High=%.0f",
-					bestOffer.SrcAirportCode, bestOffer.DstAirportCode,
-					priceRange.Low, priceRange.High)
-			}
-			if err != nil {
-				cancel()
-				resultsCh <- resultOrError{err: err}
-				return
-			}
-			if priceRange == nil {
-				return
-			}
+			if args.MaxPrice == nil {
+				_, priceRange, err := session.GetOffers(
+					ctxWithCancel,
+					flights.Args{
+						Date:        bestOffer.StartDate,
+						ReturnDate:  bestOffer.ReturnDate,
+						SrcAirports: []string{bestOffer.SrcAirportCode},
+						DstAirports: []string{bestOffer.DstAirportCode},
+						Options:     args.Options,
+					},
+				)
+				if priceRange != nil {
+					log.Printf("[CheapOffers] Price range for %s->%s: Low=%.0f, High=%.0f",
+						bestOffer.SrcAirportCode, bestOffer.DstAirportCode,
+						priceRange.Low, priceRange.High)
+				}
+				if err != nil {
+					cancel()
+					resultsCh <- resultOrError{err: err}
+					return
+				}
+				if priceRange == nil {
+					return
+				}
 
-			if bestOffer.Price >= priceRange.Low {
-				log.Printf("[CheapOffers] Offer price %.0f >= low price %.0f, skipping", bestOffer.Price, priceRange.Low)
-				return
+				if bestOffer.Price >= priceRange.Low {
+					log.Printf("[CheapOffers] Offer price %.0f >= low price %.0f, skipping", bestOffer.Price, priceRange.Low)
+					return
+				}
+				log.Printf("[CheapOffers] Found cheap offer: %s->%s, price %.0f < low price %.0f",
+					bestOffer.SrcAirportCode, bestOffer.DstAirportCode, bestOffer.Price, priceRange.Low)
+			} else {
+				if bestOffer.Price > *args.MaxPrice {
+					log.Printf("[CheapOffers] Offer price %.0f > max price %.0f, skipping", bestOffer.Price, *args.MaxPrice)
+					return
+				}
+				log.Printf("[CheapOffers] Found offer under max price: %s->%s, price %.0f <= max %.0f",
+					bestOffer.SrcAirportCode, bestOffer.DstAirportCode, bestOffer.Price, *args.MaxPrice)
 			}
-			log.Printf("[CheapOffers] Found cheap offer: %s->%s, price %.0f < low price %.0f",
-				bestOffer.SrcAirportCode, bestOffer.DstAirportCode, bestOffer.Price, priceRange.Low)
 
 			url, err := session.SerializeURL(
 				ctxWithCancel,
@@ -249,6 +264,9 @@ func validateArgs(args Args) error {
 	}
 	if len(args.DstCities) == 0 {
 		return fmt.Errorf("at least one destination city is required")
+	}
+	if args.MaxPrice != nil && *args.MaxPrice <= 0 {
+		return fmt.Errorf("maxPrice must be greater than zero")
 	}
 	return nil
 }
